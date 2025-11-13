@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+<body>
+<h2>Passkey Demo (Flask)</h2>
+
+<input id="username" placeholder="username" />
+
+<button onclick="register()">Register Passkey</button>
+<button onclick="login()">Login with Passkey</button>
+
+<script>
+async function register() {
+    let username = document.getElementById("username").value;
+
+    let options = await fetch("/register/options", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username })
+    }).then(res => res.json());
+
+    options.publicKey.challenge = buffer(options.publicKey.challenge);
+    options.publicKey.user.id = buffer(options.publicKey.user.id);
+
+    let credential = await navigator.credentials.create(options);
+
+    let payload = {
+        username,
+        credential: credentialToJSON(credential)
+    };
+
+    let result = await fetch("/register/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+    });
+
+    alert("Registration success");
+}
+
+async function login() {
+    let username = document.getElementById("username").value;
+
+    let options = await fetch("/login/options", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username })
+    }).then(res => res.json());
+
+    options.publicKey.challenge = buffer(options.publicKey.challenge);
+    options.publicKey.allowCredentials = options.publicKey.allowCredentials.map(c => ({
+        ...c,
+        id: buffer(c.id)
+    }));
+
+    let assertion = await navigator.credentials.get(options);
+
+    let payload = {
+        username,
+        credential: credentialToJSON(assertion)
+    };
+
+    let result = await fetch("/login/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+    });
+
+    alert("Logged in!");
+}
+
+function buffer(b64) {
+    return Uint8Array.from(atob(b64.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+}
+
+function credentialToJSON(cred) {
+    return JSON.parse(JSON.stringify(cred, (key, value) =>
+        value instanceof ArrayBuffer
+            ? btoa(String.fromCharCode(...new Uint8Array(value)))
+            : value
+    ));
+}
+</script>
+</body>
+</html>

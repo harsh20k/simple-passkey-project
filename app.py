@@ -1,203 +1,210 @@
 from flask import Flask, request, jsonify, send_from_directory
-from webauthn import create_webauthn_credentials, get_webauthn_credentials
-from webauthn import verify_create_webauthn_credentials, verify_get_webauthn_credentials
-from webauthn.types import RelyingParty, User
-from webauthn import metadata
-import base64
+from webauthn import (
+    generate_registration_options,
+    verify_registration_response,
+    generate_authentication_options,
+    verify_authentication_response,
+    options_to_json
+)
+from webauthn.helpers.structs import PublicKeyCredentialDescriptor
+from webauthn.helpers import base64url_to_bytes, bytes_to_base64url
+import hashlib
+import json
+from urllib.parse import urlparse
 
 app = Flask(__name__)
 
-# Temporary in-memory "database"
-USERS = {}
+def get_rp_id_from_request():
+    """Extract rp_id (domain) from the request origin"""
+    origin = request.headers.get('Origin') or request.headers.get('Referer', 'http://localhost:5001')
+    parsed = urlparse(origin)
+    # Extract hostname (domain) without port
+    rp_id = parsed.hostname or 'localhost'
+    return rp_id
 
-# Create a minimal FIDO metadata (required by verify functions)
-# In production, you should use proper FIDO metadata from FIDO Alliance
-# For now, create an empty metadata object
-FIDO_METADATA = metadata.FIDOMetadata(
-    entries=[],
-    aaguid_map={},
-    cki_map={}
-)
+def get_origin_from_request():
+    """Get the full origin URL from the request"""
+    origin = request.headers.get('Origin') or request.headers.get('Referer', 'http://localhost:5001')
+    parsed = urlparse(origin)
+    # Reconstruct origin with scheme and hostname (with port if present)
+    if parsed.port:
+        return f"{parsed.scheme}://{parsed.hostname}:{parsed.port}"
+    return f"{parsed.scheme}://{parsed.hostname}"
+
+# In-memory database (replace with real DB in production)
+USERS = {}  # {username: {password_hash, credential_id, public_key, sign_count}}
+
+def hash_password(password):
+    """Simple password hashing (use bcrypt in production)"""
+    return hashlib.sha256(password.encode()).hexdigest()
 
 @app.route("/")
 def home():
     return send_from_directory("static", "index.html")
 
-# STEP 1: Generate Registration Options
-@app.route("/register/options", methods=["POST"])
-def register_options():
-    username = request.json["username"]
+# SIGNUP: Create user account with userid/password
+@app.route("/signup", methods=["POST"])
+def signup():
+    username = request.json.get("username")
+    password = request.json.get("password")
     
-    rp = RelyingParty(id="localhost", name="Passkey Demo")
-    user = User(
-        id=username.encode()[:64],  # Max 64 bytes
-        name=username,
-        display_name=username
-    )
+    if not username or not password:
+        return jsonify({"error": "Username and password required"}), 400
     
-    options_dict, challenge = create_webauthn_credentials(
-        rp=rp,
-        user=user
-    )
+    if username in USERS:
+        return jsonify({"error": "Username already exists"}), 400
     
+    # Store user with hashed password
     USERS[username] = {
-        "challenge": challenge,
-        "rp": rp
+        "password_hash": hash_password(password),
+        "credential_id": None,
+        "public_key": None,
+        "sign_count": None
     }
     
-    # Wrap in publicKey for the frontend
-    return jsonify({"publicKey": options_dict})
+    return jsonify({"status": "success", "message": "User created successfully"})
 
-
-# STEP 2: Verify Registration Response (Passkey Created)
-@app.route("/register/verify", methods=["POST"])
-def register_verify():
-    username = request.json["username"]
-    credential = request.json["credential"]
+# STEP 1: Generate Passkey Registration Options (after signup)
+@app.route("/register/passkey/options", methods=["POST"])
+def register_passkey_options():
+    username = request.json.get("username")
     
     if username not in USERS:
-        return jsonify({"error": "User not found"}), 400
+        return jsonify({"error": "User not found"}), 404
     
-    stored_data = USERS[username]
-    challenge = stored_data["challenge"]
-    rp = stored_data["rp"]
+    # Get rp_id from request origin
+    rp_id = get_rp_id_from_request()
     
-    # Extract data from credential (format from browser)
-    # The credential comes as: { id: "...", response: { clientDataJSON: "...", attestationObject: "..." } }
-    credential_response = credential.get("response", {})
-    client_data_b64 = credential_response.get("clientDataJSON", "")
-    attestation_b64 = credential_response.get("attestationObject", "")
-    credential_id = credential.get("id", "") or credential.get("rawId", "")
-    
-    if not client_data_b64 or not attestation_b64:
-        return jsonify({"error": "Missing credential data"}), 400
-    
-    # The data is already base64 encoded from the browser, but we need to ensure proper padding
-    # Convert base64url to base64 if needed
-    def ensure_base64_padding(s):
-        s = s.replace('-', '+').replace('_', '/')
-        # Add padding if needed
-        pad = len(s) % 4
-        if pad:
-            s += '=' * (4 - pad)
-        return s
-    
-    client_data_b64 = ensure_base64_padding(client_data_b64)
-    attestation_b64 = ensure_base64_padding(attestation_b64)
-    
-    try:
-        verified = verify_create_webauthn_credentials(
-            rp=rp,
-            challenge_b64=challenge,
-            client_data_b64=client_data_b64,
-            attestation_b64=attestation_b64,
-            fido_metadata=FIDO_METADATA,
-            user_verification_required=False
-        )
-        
-        # Store credential info
-        # credential_id from browser is already base64url encoded
-        USERS[username]["credential_id"] = verified.public_key  # Store public key bytes
-        USERS[username]["credential_id_b64"] = credential_id  # Store the credential ID from browser
-        USERS[username]["public_key"] = verified.public_key
-        USERS[username]["public_key_alg"] = verified.public_key_alg
-        USERS[username]["sign_count"] = verified.sign_count
-        
-        return jsonify({"status": "registered"})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 400
-
-
-# STEP 3: Generate Login Options
-@app.route("/login/options", methods=["POST"])
-def login_options():
-    username = request.json["username"]
-    
-    if username not in USERS or "credential_id_b64" not in USERS[username]:
-        return jsonify({"error": "User not registered"}), 400
-    
-    rp = RelyingParty(id="localhost", name="Passkey Demo")
-    credential_id_b64 = USERS[username]["credential_id_b64"]
-    
-    # Decode credential ID (it's base64url from browser, convert to base64)
-    def base64url_to_bytes(s):
-        s = s.replace('-', '+').replace('_', '/')
-        pad = len(s) % 4
-        if pad:
-            s += '=' * (4 - pad)
-        return base64.b64decode(s)
-    
-    credential_id_bytes = base64url_to_bytes(credential_id_b64)
-    
-    options_dict, challenge = get_webauthn_credentials(
-        rp=rp,
-        existing_keys=[credential_id_bytes]
+    # Generate registration options
+    options = generate_registration_options(
+        rp_id=rp_id,
+        rp_name="Passkey Demo",
+        user_id=username.encode(),
+        user_name=username
     )
     
-    USERS[username]["login_challenge"] = challenge
+    # Store challenge and rp_id for verification
+    USERS[username]["registration_challenge"] = options.challenge
+    USERS[username]["registration_rp_id"] = rp_id
+    USERS[username]["registration_origin"] = get_origin_from_request()
     
-    # Wrap in publicKey for the frontend
-    return jsonify({"publicKey": options_dict})
+    # Convert options to JSON-serializable format
+    # options_to_json returns a JSON string, so parse it first
+    options_dict = json.loads(options_to_json(options))
+    return jsonify(options_dict)
 
-
-# STEP 4: Verify Login Response (Passkey Login)
-@app.route("/login/verify", methods=["POST"])
-def login_verify():
-    username = request.json["username"]
-    credential = request.json["credential"]
+# STEP 2: Verify Passkey Registration
+@app.route("/register/passkey/verify", methods=["POST"])
+def register_passkey_verify():
+    username = request.json.get("username")
+    credential = request.json.get("credential")
     
     if username not in USERS:
-        return jsonify({"error": "User not found"}), 400
+        return jsonify({"error": "User not found"}), 404
     
-    stored_data = USERS[username]
-    challenge = stored_data.get("login_challenge")
+    if "registration_challenge" not in USERS[username]:
+        return jsonify({"error": "No registration challenge found"}), 400
     
-    if not challenge:
-        return jsonify({"error": "No login challenge found"}), 400
-    
-    rp = RelyingParty(id="localhost", name="Passkey Demo")
-    
-    # Extract data from credential (format from browser)
-    credential_response = credential.get("response", {})
-    client_data_b64 = credential_response.get("clientDataJSON", "")
-    authenticator_data_b64 = credential_response.get("authenticatorData", "")
-    signature_b64 = credential_response.get("signature", "")
-    
-    if not client_data_b64 or not authenticator_data_b64 or not signature_b64:
-        return jsonify({"error": "Missing credential data"}), 400
-    
-    # Convert from base64url to base64 with proper padding
-    def ensure_base64_padding(s):
-        s = s.replace('-', '+').replace('_', '/')
-        pad = len(s) % 4
-        if pad:
-            s += '=' * (4 - pad)
-        return s
-    
-    client_data_b64 = ensure_base64_padding(client_data_b64)
-    authenticator_data_b64 = ensure_base64_padding(authenticator_data_b64)
-    signature_b64 = ensure_base64_padding(signature_b64)
+    expected_challenge = USERS[username]["registration_challenge"]
+    expected_rp_id = USERS[username].get("registration_rp_id", "localhost")
+    expected_origin = USERS[username].get("registration_origin", "http://localhost:5001")
     
     try:
-        verification = verify_get_webauthn_credentials(
-            rp=rp,
-            challenge_b64=challenge,
-            client_data_b64=client_data_b64,
-            authenticator_b64=authenticator_data_b64,
-            signature_b64=signature_b64,
-            sign_count=stored_data.get("sign_count", 0),
-            pubkey_alg=stored_data.get("public_key_alg"),
-            pubkey=stored_data.get("public_key"),
-            user_verification_required=False
+        verification = verify_registration_response(
+            credential=credential,
+            expected_challenge=expected_challenge,
+            expected_rp_id=expected_rp_id,
+            expected_origin=expected_origin
         )
         
-        # Update sign count
+        # Store passkey credentials
+        USERS[username]["credential_id"] = bytes_to_base64url(verification.credential_id)
+        USERS[username]["public_key"] = verification.credential_public_key
         USERS[username]["sign_count"] = verification.sign_count
         
-        return jsonify({"status": "authenticated"})
+        # Clean up challenge
+        del USERS[username]["registration_challenge"]
+        
+        return jsonify({"status": "success", "message": "Passkey registered successfully"})
+    
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
+# STEP 3: Generate Passkey Login Options
+@app.route("/login/passkey/options", methods=["POST"])
+def login_passkey_options():
+    username = request.json.get("username")
+    
+    if username not in USERS:
+        return jsonify({"error": "User not found"}), 404
+    
+    if not USERS[username].get("credential_id"):
+        return jsonify({"error": "No passkey registered for this user"}), 400
+    
+    # Get rp_id from request origin (should match registration)
+    rp_id = USERS[username].get("registration_rp_id", get_rp_id_from_request())
+    
+    # Create credential descriptor
+    credential_descriptor = PublicKeyCredentialDescriptor(
+        id=base64url_to_bytes(USERS[username]["credential_id"]),
+        type="public-key"
+    )
+    
+    # Generate authentication options
+    options = generate_authentication_options(
+        rp_id=rp_id,
+        allow_credentials=[credential_descriptor]
+    )
+    
+    # Store challenge and origin for verification
+    USERS[username]["auth_challenge"] = options.challenge
+    USERS[username]["auth_origin"] = get_origin_from_request()
+    
+    # Convert options to JSON-serializable format
+    # options_to_json returns a JSON string, so parse it first
+    options_dict = json.loads(options_to_json(options))
+    return jsonify(options_dict)
+
+# STEP 4: Verify Passkey Login
+@app.route("/login/passkey/verify", methods=["POST"])
+def login_passkey_verify():
+    username = request.json.get("username")
+    credential = request.json.get("credential")
+    
+    if username not in USERS:
+        return jsonify({"error": "User not found"}), 404
+    
+    if "auth_challenge" not in USERS[username]:
+        return jsonify({"error": "No authentication challenge found"}), 400
+    
+    if not USERS[username].get("credential_id"):
+        return jsonify({"error": "No passkey registered"}), 400
+    
+    expected_challenge = USERS[username]["auth_challenge"]
+    expected_rp_id = USERS[username].get("registration_rp_id", "localhost")
+    expected_origin = USERS[username].get("auth_origin", get_origin_from_request())
+    
+    try:
+        verification = verify_authentication_response(
+            credential=credential,
+            expected_challenge=expected_challenge,
+            expected_rp_id=expected_rp_id,
+            expected_origin=expected_origin,
+            credential_public_key=USERS[username]["public_key"],
+            credential_current_sign_count=USERS[username]["sign_count"]
+        )
+        
+        # Update sign count to prevent replay attacks
+        USERS[username]["sign_count"] = verification.new_sign_count
+        
+        # Clean up challenge
+        del USERS[username]["auth_challenge"]
+        
+        return jsonify({"status": "success", "message": "Login successful"})
+    
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=True, host="0.0.0.0", port=5001)
+

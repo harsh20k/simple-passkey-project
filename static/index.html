@@ -1,84 +1,292 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Passkey Demo - Flask</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 500px;
+            margin: 50px auto;
+            padding: 20px;
+        }
+        .section {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        h2 {
+            margin-top: 0;
+        }
+        input {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            box-sizing: border-box;
+        }
+        button {
+            width: 100%;
+            padding: 12px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-top: 10px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .error {
+            color: red;
+            margin-top: 10px;
+        }
+        .success {
+            color: green;
+            margin-top: 10px;
+        }
+    </style>
+</head>
 <body>
-<h2>Passkey Demo (Flask)</h2>
+    <h1>Passkey Demo</h1>
 
-<input id="username" placeholder="username" />
+    <!-- Signup Section -->
+    <div class="section">
+        <h2>1. Sign Up</h2>
+        <input type="text" id="signup-username" placeholder="Username" />
+        <input type="password" id="signup-password" placeholder="Password" />
+        <button onclick="signup()">Sign Up</button>
+        <div id="signup-message"></div>
+    </div>
 
-<button onclick="register()">Register Passkey</button>
-<button onclick="login()">Login with Passkey</button>
+    <!-- Register Passkey Section -->
+    <div class="section">
+        <h2>2. Register Passkey</h2>
+        <input type="text" id="register-username" placeholder="Username" />
+        <button onclick="registerPasskey()">Register Passkey (Biometric)</button>
+        <div id="register-message"></div>
+    </div>
 
-<script>
-async function register() {
-    let username = document.getElementById("username").value;
+    <!-- Login Section -->
+    <div class="section">
+        <h2>3. Login with Passkey</h2>
+        <input type="text" id="login-username" placeholder="Username" />
+        <button onclick="loginWithPasskey()">Login with Passkey (Biometric)</button>
+        <div id="login-message"></div>
+    </div>
 
-    let options = await fetch("/register/options", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username })
-    }).then(res => res.json());
+    <script>
+        // Helper: Convert base64url string to ArrayBuffer
+        function base64urlToBuffer(base64url) {
+            const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+            const binary = atob(base64);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) {
+                bytes[i] = binary.charCodeAt(i);
+            }
+            return bytes.buffer;
+        }
 
-    options.publicKey.challenge = buffer(options.publicKey.challenge);
-    options.publicKey.user.id = buffer(options.publicKey.user.id);
+        // Helper: Convert ArrayBuffer to base64url string
+        function bufferToBase64url(buffer) {
+            const bytes = new Uint8Array(buffer);
+            let binary = '';
+            for (let i = 0; i < bytes.length; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+        }
 
-    let credential = await navigator.credentials.create(options);
+        // Signup function
+        async function signup() {
+            const username = document.getElementById('signup-username').value;
+            const password = document.getElementById('signup-password').value;
+            const messageDiv = document.getElementById('signup-message');
+            
+            if (!username || !password) {
+                messageDiv.innerHTML = '<div class="error">Please enter username and password</div>';
+                return;
+            }
 
-    let payload = {
-        username,
-        credential: credentialToJSON(credential)
-    };
+            try {
+                const response = await fetch('/signup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
 
-    let result = await fetch("/register/verify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-    });
+                const data = await response.json();
+                
+                if (response.ok) {
+                    messageDiv.innerHTML = '<div class="success">✓ ' + data.message + '</div>';
+                } else {
+                    messageDiv.innerHTML = '<div class="error">✗ ' + data.error + '</div>';
+                }
+            } catch (error) {
+                messageDiv.innerHTML = '<div class="error">✗ Error: ' + error.message + '</div>';
+            }
+        }
 
-    alert("Registration success");
-}
+        // Register Passkey function
+        async function registerPasskey() {
+            const username = document.getElementById('register-username').value;
+            const messageDiv = document.getElementById('register-message');
+            
+            if (!username) {
+                messageDiv.innerHTML = '<div class="error">Please enter username</div>';
+                return;
+            }
 
-async function login() {
-    let username = document.getElementById("username").value;
+            try {
+                // Step 1: Get registration options
+                const optionsResponse = await fetch('/register/passkey/options', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username })
+                });
 
-    let options = await fetch("/login/options", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username })
-    }).then(res => res.json());
+                if (!optionsResponse.ok) {
+                    const errorData = await optionsResponse.json();
+                    messageDiv.innerHTML = '<div class="error">✗ ' + errorData.error + '</div>';
+                    return;
+                }
 
-    options.publicKey.challenge = buffer(options.publicKey.challenge);
-    options.publicKey.allowCredentials = options.publicKey.allowCredentials.map(c => ({
-        ...c,
-        id: buffer(c.id)
-    }));
+                const options = await optionsResponse.json();
+                
+                // Verify options structure
+                if (!options || !options.challenge) {
+                    messageDiv.innerHTML = '<div class="error">✗ Invalid response format</div>';
+                    console.error('Options received:', options);
+                    return;
+                }
 
-    let assertion = await navigator.credentials.get(options);
+                // Convert base64url strings to ArrayBuffers
+                options.challenge = base64urlToBuffer(options.challenge);
+                if (options.user && options.user.id) {
+                    options.user.id = base64urlToBuffer(options.user.id);
+                }
 
-    let payload = {
-        username,
-        credential: credentialToJSON(assertion)
-    };
+                // Step 2: Create credential using WebAuthn API
+                const credential = await navigator.credentials.create({
+                    publicKey: options
+                });
 
-    let result = await fetch("/login/verify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-    });
+                // Step 3: Send credential to server for verification
+                const verifyResponse = await fetch('/register/passkey/verify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username,
+                        credential: {
+                            id: credential.id,
+                            rawId: bufferToBase64url(credential.rawId),
+                            response: {
+                                clientDataJSON: bufferToBase64url(credential.response.clientDataJSON),
+                                attestationObject: bufferToBase64url(credential.response.attestationObject)
+                            },
+                            type: credential.type
+                        }
+                    })
+                });
 
-    alert("Logged in!");
-}
+                const verifyData = await verifyResponse.json();
+                
+                if (verifyResponse.ok) {
+                    messageDiv.innerHTML = '<div class="success">✓ ' + verifyData.message + '</div>';
+                } else {
+                    messageDiv.innerHTML = '<div class="error">✗ ' + verifyData.error + '</div>';
+                }
+            } catch (error) {
+                messageDiv.innerHTML = '<div class="error">✗ Error: ' + error.message + '</div>';
+            }
+        }
 
-function buffer(b64) {
-    return Uint8Array.from(atob(b64.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
-}
+        // Login with Passkey function
+        async function loginWithPasskey() {
+            const username = document.getElementById('login-username').value;
+            const messageDiv = document.getElementById('login-message');
+            
+            if (!username) {
+                messageDiv.innerHTML = '<div class="error">Please enter username</div>';
+                return;
+            }
 
-function credentialToJSON(cred) {
-    return JSON.parse(JSON.stringify(cred, (key, value) =>
-        value instanceof ArrayBuffer
-            ? btoa(String.fromCharCode(...new Uint8Array(value)))
-            : value
-    ));
-}
-</script>
+            try {
+                // Step 1: Get authentication options
+                const optionsResponse = await fetch('/login/passkey/options', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username })
+                });
+
+                if (!optionsResponse.ok) {
+                    const errorData = await optionsResponse.json();
+                    messageDiv.innerHTML = '<div class="error">✗ ' + errorData.error + '</div>';
+                    return;
+                }
+
+                const options = await optionsResponse.json();
+                
+                // Verify options structure
+                if (!options || !options.challenge) {
+                    messageDiv.innerHTML = '<div class="error">✗ Invalid response format</div>';
+                    console.error('Options received:', options);
+                    return;
+                }
+
+                // Convert base64url strings to ArrayBuffers
+                options.challenge = base64urlToBuffer(options.challenge);
+                if (options.allowCredentials) {
+                    options.allowCredentials = options.allowCredentials.map(cred => ({
+                        ...cred,
+                        id: base64urlToBuffer(cred.id)
+                    }));
+                }
+
+                // Step 2: Get assertion using WebAuthn API (triggers biometric)
+                const assertion = await navigator.credentials.get({
+                    publicKey: options
+                });
+
+                // Step 3: Send assertion to server for verification
+                const verifyResponse = await fetch('/login/passkey/verify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username,
+                        credential: {
+                            id: assertion.id,
+                            rawId: bufferToBase64url(assertion.rawId),
+                            response: {
+                                clientDataJSON: bufferToBase64url(assertion.response.clientDataJSON),
+                                authenticatorData: bufferToBase64url(assertion.response.authenticatorData),
+                                signature: bufferToBase64url(assertion.response.signature),
+                                userHandle: assertion.response.userHandle ? bufferToBase64url(assertion.response.userHandle) : null
+                            },
+                            type: assertion.type
+                        }
+                    })
+                });
+
+                const verifyData = await verifyResponse.json();
+                
+                if (verifyResponse.ok) {
+                    messageDiv.innerHTML = '<div class="success">✓ ' + verifyData.message + '</div>';
+                } else {
+                    messageDiv.innerHTML = '<div class="error">✗ ' + verifyData.error + '</div>';
+                }
+            } catch (error) {
+                messageDiv.innerHTML = '<div class="error">✗ Error: ' + error.message + '</div>';
+            }
+        }
+    </script>
 </body>
 </html>
+

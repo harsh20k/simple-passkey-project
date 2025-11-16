@@ -4,167 +4,27 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Passkey Login Demo</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 20px;
-        }
-        
-        .container {
-            background: white;
-            border-radius: 16px;
-            padding: 40px;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-            max-width: 400px;
-            width: 100%;
-        }
-        
-        h1 {
-            color: #333;
-            margin-bottom: 10px;
-            font-size: 28px;
-        }
-        
-        .subtitle {
-            color: #666;
-            margin-bottom: 30px;
-            font-size: 14px;
-        }
-        
-        .section {
-            margin-bottom: 30px;
-        }
-        
-        h2 {
-            color: #444;
-            font-size: 18px;
-            margin-bottom: 15px;
-            display: flex;
-            align-items: center;
-        }
-        
-        h2::before {
-            content: '🔐';
-            margin-right: 8px;
-        }
-        
-        input {
-            width: 100%;
-            padding: 12px 16px;
-            border: 2px solid #e1e8ed;
-            border-radius: 8px;
-            font-size: 14px;
-            margin-bottom: 12px;
-            transition: border-color 0.3s;
-        }
-        
-        input:focus {
-            outline: none;
-            border-color: #667eea;
-        }
-        
-        button {
-            width: 100%;
-            padding: 12px 24px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            border-radius: 8px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: transform 0.2s, box-shadow 0.2s;
-        }
-        
-        button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
-        }
-        
-        button:active {
-            transform: translateY(0);
-        }
-        
-        button:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-        }
-        
-        .message {
-            margin-top: 20px;
-            padding: 12px 16px;
-            border-radius: 8px;
-            font-size: 14px;
-            display: none;
-        }
-        
-        .message.success {
-            background: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
-        }
-        
-        .message.error {
-            background: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
-        
-        .divider {
-            height: 1px;
-            background: #e1e8ed;
-            margin: 30px 0;
-        }
-        
-        .info {
-            background: #e7f3ff;
-            padding: 12px;
-            border-radius: 8px;
-            font-size: 13px;
-            color: #004085;
-            margin-top: 20px;
-        }
-    </style>
 </head>
 <body>
-    <div class="container">
-        <h1>Passkey Demo</h1>
-        <p class="subtitle">Experience passwordless authentication</p>
-        
-        <div class="section">
-            <h2>Register Passkey</h2>
-            <input type="text" id="registerUsername" placeholder="Enter username" />
-            <button onclick="registerPasskey()">Create Passkey</button>
-        </div>
-        
-        <div class="divider"></div>
-        
-        <div class="section">
-            <h2>Login with Passkey</h2>
-            <input type="text" id="loginUsername" placeholder="Enter username" />
-            <button onclick="loginWithPasskey()">Sign In</button>
-        </div>
-        
-        <div id="message" class="message"></div>
-        
-        <div class="info">
-            <strong>ℹ️ How it works:</strong><br>
-            1. Register a passkey with your username<br>
-            2. Use biometrics or security key to authenticate<br>
-            3. Login instantly without passwords!
-        </div>
-    </div>
+    <h1>Passkey Demo</h1>
+    <p>Experience passwordless authentication</p>
+    
+    <h2>Register Passkey</h2>
+    <input type="text" id="registerUsername" placeholder="Enter username" />
+    <button onclick="registerPasskey()">Create Passkey</button>
+    
+    <h2>Login with Passkey</h2>
+    <input type="text" id="loginUsername" placeholder="Enter username" />
+    <button onclick="loginWithPasskey()">Sign In</button>
+    
+    <div id="message"></div>
+    
+    <p>
+        <strong>How it works:</strong><br>
+        1. Register a passkey with your username<br>
+        2. Use biometrics or security key to authenticate<br>
+        3. Login instantly without passwords!
+    </p>
 
     <script>
         // Helper function to convert between formats
@@ -193,10 +53,8 @@
         function showMessage(text, type) {
             const messageEl = document.getElementById('message');
             messageEl.textContent = text;
-            messageEl.className = `message ${type}`;
-            messageEl.style.display = 'block';
             setTimeout(() => {
-                messageEl.style.display = 'none';
+                messageEl.textContent = '';
             }, 5000);
         }
 
